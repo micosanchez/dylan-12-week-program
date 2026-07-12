@@ -635,24 +635,57 @@ function drawChart(pts,unit){
 }
 function roundRect(ctx,x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath()}
 
-/* ---------- PHOTOS ---------- */
+/* ---------- PHOTOS (IndexedDB — no localStorage size limit) ---------- */
+let db=null,photosCache=[];
+function idbOpen(){return new Promise((res,rej)=>{
+  const r=indexedDB.open('dylan12db',1);
+  r.onupgradeneeded=()=>{r.result.createObjectStore('photos',{keyPath:'id',autoIncrement:true})};
+  r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);
+})}
+function idbTx(mode,fn){return new Promise(async(res,rej)=>{
+  try{if(!db)db=await idbOpen()}catch(e){return rej(e)}
+  const tx=db.transaction('photos',mode);const out=fn(tx.objectStore('photos'));
+  tx.oncomplete=()=>res(out&&out.result!==undefined?out.result:undefined);
+  tx.onerror=()=>rej(tx.error);
+})}
+const idbAdd=p=>idbTx('readwrite',st=>st.add(p));
+const idbDel=id=>idbTx('readwrite',st=>st.delete(id));
+const idbClear=()=>idbTx('readwrite',st=>st.clear());
+const idbAll=()=>idbTx('readonly',st=>st.getAll());
+async function loadPhotos(){
+  try{
+    /* one-time migration from old localStorage photos */
+    if(S.photos&&S.photos.length){
+      for(const p of S.photos)await idbAdd({ts:p.ts,data:p.data});
+      S.photos=[];save();
+    }
+    photosCache=await idbAll()||[];
+  }catch(e){photosCache=[]}
+  renderPhotos();
+}
 $('#photo-in').addEventListener('change',e=>{
   const f=e.target.files[0];if(!f)return;
   const img=new Image(),rd=new FileReader();
-  rd.onload=()=>{img.onload=()=>{
+  rd.onload=()=>{img.onload=async()=>{
     const max=900,sc=Math.min(1,max/Math.max(img.width,img.height));
     const cv=document.createElement('canvas');cv.width=img.width*sc;cv.height=img.height*sc;
     cv.getContext('2d').drawImage(img,0,0,cv.width,cv.height);
-    S.photos.push({ts:Date.now(),data:cv.toDataURL('image/jpeg',0.7)});
-    save();renderPhotos();toast('Photo saved ✓');
+    try{
+      await idbAdd({ts:Date.now(),data:cv.toDataURL('image/jpeg',0.7)});
+      photosCache=await idbAll()||[];
+      renderPhotos();toast('Photo saved ✓');
+    }catch(err){toast('⚠️ Could not save photo')}
   };img.src=rd.result};
   rd.readAsDataURL(f);e.target.value='';
 });
 function renderPhotos(){
-  $('#photo-grid').innerHTML=S.photos.map((p,i)=>
-    '<div class="ph"><img src="'+p.data+'" alt=""><div class="pd">'+new Date(p.ts).toLocaleDateString('en-US',{month:'short',day:'numeric'})+'</div><button class="px" onclick="delPhoto('+i+')">✕</button></div>').join('');
+  $('#photo-grid').innerHTML=photosCache.map(p=>
+    '<div class="ph"><img src="'+p.data+'" alt=""><div class="pd">'+new Date(p.ts).toLocaleDateString('en-US',{month:'short',day:'numeric'})+'</div><button class="px" onclick="delPhoto('+p.id+')">✕</button></div>').join('');
 }
-function delPhoto(i){if(confirm('Delete this photo?')){S.photos.splice(i,1);save();renderPhotos()}}
+async function delPhoto(id){
+  if(!confirm('Delete this photo?'))return;
+  try{await idbDel(id);photosCache=await idbAll()||[];renderPhotos()}catch(e){toast('⚠️ Delete failed')}
+}
 
 /* ---------- NUTRITION ---------- */
 const MEALS=[
@@ -681,12 +714,13 @@ function renderMeals(){
 }
 
 /* ---------- EXPORT / IMPORT ---------- */
-function exportData(){
-  const blob=new Blob([JSON.stringify({app:'dylan12',v:1,exported:new Date().toISOString(),data:S})],{type:'application/json'});
+async function exportData(){
+  let photos=[];try{photos=await idbAll()||[]}catch(e){}
+  const blob=new Blob([JSON.stringify({app:'dylan12',v:2,exported:new Date().toISOString(),data:S,photos})],{type:'application/json'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
   a.download='dylan-training-backup-'+new Date().toISOString().slice(0,10)+'.json';
   document.body.appendChild(a);a.click();a.remove();
-  toast('Backup exported ✓');
+  toast('Backup exported ✓ ('+photos.length+' photos included)');
 }
 $('#import-in').addEventListener('change',e=>{
   const f=e.target.files[0];if(!f)return;
@@ -695,7 +729,13 @@ $('#import-in').addEventListener('change',e=>{
     const j=JSON.parse(rd.result);
     const d=j.data&&j.app==='dylan12'?j.data:j;
     if(!d.logs&&!d.bw)throw 0;
+    const ph=(j.photos&&j.photos.length?j.photos:(d.photos||[]));
+    d.photos=[];
     S=Object.assign(defaults(),d);save();
+    (async()=>{try{
+      if(ph.length){await idbClear();for(const p of ph)await idbAdd({ts:p.ts,data:p.data})}
+      photosCache=await idbAll()||[];renderPhotos();
+    }catch(err){}})();
     selWeek=null;go('today');toast('Backup restored ✓');
     $('#auto-rest-btn').textContent=S.autoRest?'On':'Off';$('#rest-len').value=S.restLen;$('#track-wr-btn').textContent=S.trackWR!==false?'On':'Off';
   }catch(err){toast('⚠️ Not a valid backup file')}};
@@ -703,11 +743,15 @@ $('#import-in').addEventListener('change',e=>{
 });
 function resetAll(){
   if(confirm('Erase ALL workout history, bodyweight, and photos? Export a backup first!')&&confirm('Really erase everything?')){
-    localStorage.removeItem(KEY);S=defaults();selWeek=null;go('today');toast('All data erased');
+    localStorage.removeItem(KEY);S=defaults();selWeek=null;
+    idbClear().then(()=>{photosCache=[];renderPhotos()}).catch(()=>{});
+    go('today');toast('All data erased');
   }
 }
 
 /* ---------- INIT ---------- */
+if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('sw.js').catch(()=>{});
+loadPhotos();
 window.addEventListener('pagehide',save);
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')save()});
 $('#auto-rest-btn').textContent=S.autoRest?'On':'Off';
