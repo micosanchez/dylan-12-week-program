@@ -95,6 +95,8 @@ input::-webkit-outer-spin-button,input::-webkit-inner-spin-button{-webkit-appear
 .set-row .sn{color:var(--txt2);font-size:13px;font-weight:700;text-align:center}
 .set-row input{padding:11px 10px;font-size:16px;text-align:center;width:100%}
 .set-row input::placeholder{color:var(--txt3)}
+.set-row.simple{grid-template-columns:34px 1fr 44px}
+.set-row.simple .set-lbl{font-size:14px;color:var(--txt2);padding:11px 4px}
 .chk{width:40px;height:40px;border-radius:12px;background:var(--card2);display:flex;align-items:center;justify-content:center;font-size:18px;color:var(--txt3);font-weight:800}
 .chk.on{background:var(--green);color:#000}
 .ex-notes{width:100%;margin-top:8px;padding:10px 12px;font-size:14px;min-height:38px;resize:none}
@@ -220,6 +222,11 @@ select.exsel{width:100%;padding:12px 14px;font-size:15px;margin-bottom:12px;-web
   <div class="card">
     <h4 style="font-size:16px;font-weight:800;margin-bottom:8px">Settings</h4>
     <div class="row" style="margin-bottom:10px">
+      <span style="font-size:14px">Track weight &amp; reps</span>
+      <button class="btn small sec" id="track-wr-btn" onclick="toggleTrackWR()">On</button>
+    </div>
+    <p class="muted" style="margin:-4px 0 12px;font-size:12px">Off = just check sets done. Your logged numbers are kept, and charts need this On.</p>
+    <div class="row" style="margin-bottom:10px">
       <span style="font-size:14px">Auto-start rest timer on set ✓</span>
       <button class="btn small sec" id="auto-rest-btn" onclick="toggleAutoRest()">On</button>
     </div>
@@ -342,7 +349,7 @@ function load(){
   try{const raw=localStorage.getItem(KEY);if(raw){const s=JSON.parse(raw);return Object.assign(defaults(),s)}}catch(e){}
   return defaults();
 }
-function defaults(){return{logs:{},bw:[],photos:[],autoRest:true,restLen:120,started:Date.now()}}
+function defaults(){return{logs:{},bw:[],photos:[],autoRest:true,restLen:120,trackWR:true,started:Date.now()}}
 let saveT=null;
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){toast('⚠️ Storage full — export & remove old photos')}}
 function saveSoon(){clearTimeout(saveT);saveT=setTimeout(save,150)}
@@ -479,17 +486,23 @@ function openWorkout(w,d){
     const ex=log.ex[i]||(log.ex[i]={name:e.name,sets:Array.from({length:e.sets},()=>({w:'',r:'',c:false})),notes:''});
     ex.name=e.name;
     while(ex.sets.length<e.sets)ex.sets.push({w:'',r:'',c:false});
-    const lp=lastPerf(e.name,w,d);
+    const lp=lastPerf(e.name,w,d),tr=S.trackWR!==false;
     h+='<div class="ex-card"><h4>'+esc(e.name)+'</h4>'
-      +'<div class="tgt">'+e.sets+' sets × '+e.lo+'–'+e.hi+' reps · '+esc(e.rir)+' · rest '+e.rest+'s</div>'
-      +'<div class="last'+(lp?'':'')+'">'+(lp?'Last (Wk '+lp.week+'): '+lp.sets.map(s=>(s.w||0)+'×'+(s.r||0)).join('  ·  ')+' — beat it':'First time — set the bar')+'</div>'
-      +'<div class="hdr-lbls"><span>Set</span><span>lbs</span><span>reps</span><span>✓</span></div>';
+      +'<div class="tgt">'+e.sets+' sets × '+e.lo+'–'+e.hi+' reps · '+esc(e.rir)+' · rest '+e.rest+'s</div>';
+    if(tr)h+='<div class="last">'+(lp?'Last (Wk '+lp.week+'): '+lp.sets.map(s=>(s.w||0)+'×'+(s.r||0)).join('  ·  ')+' — beat it':'First time — set the bar')+'</div>';
+    if(tr)h+='<div class="hdr-lbls"><span>Set</span><span>lbs</span><span>reps</span><span>✓</span></div>';
     for(let si=0;si<e.sets;si++){
       const st=ex.sets[si];
-      h+='<div class="set-row"><div class="sn">'+(si+1)+'</div>'
-        +'<input type="number" inputmode="decimal" placeholder="'+(lp&&lp.sets[si]?lp.sets[si].w:'lbs')+'" value="'+(st.w!==''?st.w:'')+'" onchange="setVal('+i+','+si+',\'w\',this.value)">'
-        +'<input type="number" inputmode="numeric" placeholder="'+(lp&&lp.sets[si]?lp.sets[si].r:e.lo+'–'+e.hi)+'" value="'+(st.r!==''?st.r:'')+'" onchange="setVal('+i+','+si+',\'r\',this.value)">'
-        +'<button class="chk'+(st.c?' on':'')+'" onclick="tickSet(this,'+i+','+si+','+e.rest+')">✓</button></div>';
+      if(tr){
+        h+='<div class="set-row"><div class="sn">'+(si+1)+'</div>'
+          +'<input type="number" inputmode="decimal" placeholder="'+(lp&&lp.sets[si]?lp.sets[si].w:'lbs')+'" value="'+(st.w!==''?st.w:'')+'" onchange="setVal('+i+','+si+',\'w\',this.value)">'
+          +'<input type="number" inputmode="numeric" placeholder="'+(lp&&lp.sets[si]?lp.sets[si].r:e.lo+'–'+e.hi)+'" value="'+(st.r!==''?st.r:'')+'" onchange="setVal('+i+','+si+',\'r\',this.value)">'
+          +'<button class="chk'+(st.c?' on':'')+'" onclick="tickSet(this,'+i+','+si+','+e.rest+')">✓</button></div>';
+      }else{
+        h+='<div class="set-row simple"><div class="sn">'+(si+1)+'</div>'
+          +'<div class="set-lbl">Set '+(si+1)+' · '+e.lo+'–'+e.hi+' reps</div>'
+          +'<button class="chk'+(st.c?' on':'')+'" onclick="tickSet(this,'+i+','+si+','+e.rest+')">✓</button></div>';
+      }
     }
     h+='<textarea class="ex-notes" placeholder="Notes (seat pin, grip, cues…)" onchange="setNotes('+i+',this.value)">'+esc(ex.notes||'')+'</textarea></div>';
   });
@@ -537,6 +550,7 @@ function paintTimer(){
 function toggleTimer(){tInt?stopTimer(false):startTimer(S.restLen)}
 function adjRest(n){if(tInt){tLeft+=n;tTotal+=n;paintTimer()}else{S.restLen=Math.max(30,(S.restLen||120)+n);save();$('#rest-len').value=S.restLen;toast('Default rest: '+S.restLen+'s')}}
 function toggleAutoRest(){S.autoRest=!S.autoRest;save();$('#auto-rest-btn').textContent=S.autoRest?'On':'Off'}
+function toggleTrackWR(){S.trackWR=S.trackWR===false;save();$('#track-wr-btn').textContent=S.trackWR?'On':'Off';toast(S.trackWR?'Tracking weight & reps':'Checkbox-only mode')}
 function setRestLen(v){S.restLen=Math.max(30,parseInt(v)||120);save()}
 
 /* ---------- PROGRESS / CHARTS ---------- */
@@ -683,7 +697,7 @@ $('#import-in').addEventListener('change',e=>{
     if(!d.logs&&!d.bw)throw 0;
     S=Object.assign(defaults(),d);save();
     selWeek=null;go('today');toast('Backup restored ✓');
-    $('#auto-rest-btn').textContent=S.autoRest?'On':'Off';$('#rest-len').value=S.restLen;
+    $('#auto-rest-btn').textContent=S.autoRest?'On':'Off';$('#rest-len').value=S.restLen;$('#track-wr-btn').textContent=S.trackWR!==false?'On':'Off';
   }catch(err){toast('⚠️ Not a valid backup file')}};
   rd.readAsText(f);e.target.value='';
 });
@@ -697,6 +711,7 @@ function resetAll(){
 window.addEventListener('pagehide',save);
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')save()});
 $('#auto-rest-btn').textContent=S.autoRest?'On':'Off';
+$('#track-wr-btn').textContent=S.trackWR!==false?'On':'Off';
 $('#rest-len').value=S.restLen||120;
 renderMeals();
 renderToday();
